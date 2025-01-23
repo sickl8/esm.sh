@@ -910,7 +910,7 @@ func (ctx *BuildContext) resloveDTS(entry BuildEntry) (string, error) {
 			versions = append([]string{pkgVersion}, versions...)
 		}
 		for _, version := range versions {
-			p, err := ctx.npmrc.getPackageInfo(typesPkgName, version)
+			p, err := ctx.npmrc.getPackageInfo(typesPkgName, PackageIdentifier{ version: version })
 			if err == nil {
 				dtsModule := EsmPath{
 					PkgName:       typesPkgName,
@@ -1021,7 +1021,7 @@ func (ctx *BuildContext) lookupDep(specifier string, isDts bool) (esm EsmPath, p
 	pkgName, version, subpath, _ := splitEsmPath(specifier)
 lookup:
 	if v, ok := ctx.args.deps[pkgName]; ok {
-		packageJson, err = ctx.npmrc.getPackageInfo(pkgName, v)
+		packageJson, err = ctx.npmrc.getPackageInfo(pkgName, PackageIdentifier{ version: v })
 		if err == nil {
 			esm = EsmPath{
 				PkgName:       pkgName,
@@ -1064,7 +1064,7 @@ lookup:
 		}
 	}
 
-	packageJson, err = ctx.npmrc.getPackageInfo(pkgName, version)
+	packageJson, err = ctx.npmrc.getPackageInfo(pkgName, PackageIdentifier{ version: version })
 	if err == nil {
 		esm = EsmPath{
 			PkgName:       pkgName,

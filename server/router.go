@@ -877,7 +877,7 @@ func esmRouter(db DB, buildStorage storage.Storage, logger *log.Logger) rex.Hand
 
 		// redirect `/@types/PKG` to it's main dts file
 		if strings.HasPrefix(esm.PkgName, "@types/") && esm.SubPath == "" {
-			info, err := npmrc.getPackageInfo(esm.PkgName, esm.PkgVersion)
+			info, err := npmrc.getPackageInfo(esm.PkgName, PackageIdentifier{ version: esm.PkgVersion })
 			if err != nil {
 				return rex.Status(500, err.Error())
 			}

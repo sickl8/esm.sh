@@ -8,11 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -57,6 +60,7 @@ func (p *Package) String() string {
 type NpmPackageMetadata struct {
 	DistTags map[string]string         `json:"dist-tags"`
 	Versions map[string]PackageJSONRaw `json:"versions"`
+	Time	 map[string]string         `json:"time"` 
 }
 
 // PackageJSONRaw defines the package.json of a NPM package
@@ -342,13 +346,23 @@ func (npmrc *NpmRC) getRegistryByPackageName(packageName string) *NpmRegistry {
 	return &npmrc.NpmRegistry
 }
 
-func (npmrc *NpmRC) getPackageInfo(pkgName string, version string) (packageJson *PackageJSON, err error) {
+type PackageIdentifier struct {
+	version	string
+	UTCdateOrTimestamp string
+}
+
+func (npmrc *NpmRC) getPackageInfo(pkgName string, identifier PackageIdentifier) (packageJson *PackageJSON, err error) {
 	reg := npmrc.getRegistryByPackageName(pkgName)
 	getCacheKey := func(pkgName string, pkgVersion string) string {
 		return reg.Registry + pkgName + "@" + pkgVersion
 	}
 
-	version = normalizePackageVersion(version)
+	version := normalizePackageVersion(identifier.version)
+	UTCDate := normalizeUTCDateOrTimestamp(identifier.UTCdateOrTimestamp)
+	if (UTCDate != nil) {
+		// use date instead, or a combination of both
+	}
+
 	return withCache(getCacheKey(pkgName, version), time.Duration(config.NpmQueryCacheTTL)*time.Second, func() (*PackageJSON, string, error) {
 		// check if the package has been installed
 		if !isDistTag(version) && isExactVersion(version) {
@@ -513,7 +527,7 @@ func (npmrc *NpmRC) installPackage(pkg Package) (packageJson *PackageJSON, err e
 	} else if pkg.PkgPrNew {
 		err = fetchPackageTarball(&NpmRegistry{}, installDir, pkg.Name, "https://pkg.pr.new/"+pkg.Name+"@"+pkg.Version)
 	} else {
-		info, fetchErr := npmrc.getPackageInfo(pkg.Name, pkg.Version)
+		info, fetchErr := npmrc.getPackageInfo(pkg.Name, PackageIdentifier{ version: pkg.Version })
 		if fetchErr != nil {
 			return nil, fetchErr
 		}
@@ -569,7 +583,7 @@ func (npmrc *NpmRC) installDependencies(wd string, pkgJson *PackageJSON, npmMode
 				return
 			}
 			if !isExactVersion(pkg.Version) && !pkg.Github && !pkg.PkgPrNew {
-				p, e := npmrc.getPackageInfo(pkg.Name, pkg.Version)
+				p, e := npmrc.getPackageInfo(pkg.Name, PackageIdentifier{ version: pkg.Version })
 				if e != nil {
 					return
 				}
@@ -811,6 +825,48 @@ func normalizePackageVersion(version string) string {
 		return "latest"
 	}
 	return version
+}
+
+var epochRe = regexp.MustCompile(`^([0-9]+)(?:(s)|(ms)|(e([1-9][0-9]?)))$`)
+var utcDateRe = regexp.MustCompile(`^[0-9]{4,}(-[0-9]{2}(-[0-9]{2}(T([0-9]{2}(:[0-9]{2}(:[0-9]{3}(Z?))?)?)?)?)?)?$`)
+
+func normalizeUTCDateOrTimestamp(timeStr string) *time.Time {
+	byteTimeStr := []byte(timeStr)
+	if epochRe.Match(byteTimeStr) {
+		// timeStr is an epoch timestamp
+		matches := epochRe.FindStringSubmatch(string(byteTimeStr))
+		seconds, err := strconv.ParseInt(matches[0], 10, 64);
+		var mseconds int64 = 0
+		if (err != nil) {
+			return nil
+		}
+		if matches[4] != "" {
+			// <number>e<exp>
+			exp, _ := strconv.ParseInt(matches[5], 10, 64);
+			seconds *= int64(math.Pow(10, float64(exp)));
+		} else if matches[2] == "ms" {
+			mseconds = seconds % 1000
+			seconds /= 1000
+		} // else == "s", do nothing
+		parsedTime := time.Unix(seconds, mseconds * 1e6)
+		return &parsedTime
+	} else if utcDateRe.Match(byteTimeStr) {
+		// timeStr is a date
+		matches := utcDateRe.FindStringSubmatch(string(byteTimeStr))
+		segments := []string{"1970", "-01", "-01", "T", "00", ":00", ":000", "Z"}
+		for index, defaultValue := range segments {
+			if matches[index] == "" {
+				timeStr += defaultValue
+			}
+		}
+		timeStr += "00:00"; // time.RFC3339 has a timezone at the end, we use UTC so it's ommited
+		parsedTime, err := time.Parse(time.RFC3339, timeStr)
+		if err != nil {
+			return nil
+		}
+		return &parsedTime
+	}
+	return nil
 }
 
 func isDistTag(s string) bool {

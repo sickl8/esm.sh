@@ -137,7 +137,7 @@ func resolveBuildArgs(npmrc *NpmRC, installDir string, args *BuildArgs, esm EsmP
 			} else if esm.GhPrefix || esm.PrPrefix {
 				p, err = npmrc.installPackage(esm.Package())
 			} else {
-				p, err = npmrc.getPackageInfo(esm.PkgName, esm.PkgVersion)
+				p, err = npmrc.getPackageInfo(esm.PkgName, PackageIdentifier{ version: esm.PkgVersion })
 			}
 			if err != nil {
 				return
@@ -255,7 +255,7 @@ func walkDeps(npmrc *NpmRC, installDir string, pkg Package, mark *set.Set[string
 	} else if pkg.Github || pkg.PkgPrNew {
 		p, err = npmrc.installPackage(pkg)
 	} else {
-		p, err = npmrc.getPackageInfo(pkg.Name, pkg.Version)
+		p, err = npmrc.getPackageInfo(pkg.Name, PackageIdentifier{ version: pkg.Version })
 	}
 	if err != nil {
 		return

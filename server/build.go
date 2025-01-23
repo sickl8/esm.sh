@@ -897,7 +897,7 @@ func (ctx *BuildContext) buildModule(analyzeMode bool) (meta *BuildMeta, include
 						svelteVersion = version
 					}
 					if !isExactVersion(svelteVersion) {
-						info, err := ctx.npmrc.getPackageInfo("svelte", svelteVersion)
+						info, err := ctx.npmrc.getPackageInfo("svelte", PackageIdentifier{ version: svelteVersion })
 						if err != nil {
 							return esbuild.OnLoadResult{}, errors.New("failed to get svelte package info")
 						}
@@ -931,7 +931,7 @@ func (ctx *BuildContext) buildModule(analyzeMode bool) (meta *BuildMeta, include
 						vueVersion = version
 					}
 					if !isExactVersion(vueVersion) {
-						info, err := ctx.npmrc.getPackageInfo("vue", vueVersion)
+						info, err := ctx.npmrc.getPackageInfo("vue", PackageIdentifier{ version: vueVersion })
 						if err != nil {
 							return esbuild.OnLoadResult{}, errors.New("failed to get vue package info")
 						}

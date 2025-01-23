@@ -84,7 +84,7 @@ func resolveSvelteVersion(npmrc *NpmRC, importMap common.ImportMap) (svelteVersi
 	}
 	if !isExactVersion(svelteVersion) {
 		var info *PackageJSON
-		info, err = npmrc.getPackageInfo("svelte", svelteVersion)
+		info, err = npmrc.getPackageInfo("svelte", PackageIdentifier{ version: svelteVersion })
 		if err != nil {
 			return
 		}
@@ -291,7 +291,7 @@ func resolveVueVersion(npmrc *NpmRC, importMap common.ImportMap) (vueVersion str
 	}
 	if !isExactVersion(vueVersion) {
 		var info *PackageJSON
-		info, err = npmrc.getPackageInfo("vue", vueVersion)
+		info, err = npmrc.getPackageInfo("vue", PackageIdentifier{ version: vueVersion })
 		if err != nil {
 			return
 		}

@@ -143,7 +143,7 @@ func legacyESM(ctx *rex.Context, buildStorage storage.Storage, buildVersionPrefi
 		}
 		if !isExactVersion(pkgVersion) {
 			npmrc := DefaultNpmRC()
-			pkgInfo, err := npmrc.getPackageInfo(pkgName, pkgVersion)
+			pkgInfo, err := npmrc.getPackageInfo(pkgName, PackageIdentifier{ version: pkgVersion })
 			if err != nil {
 				if strings.Contains(err.Error(), " not found") {
 					return rex.Status(404, err.Error())

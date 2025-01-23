@@ -205,7 +205,7 @@ func praseEsmPath(npmrc *NpmRC, pathname string) (esm EsmPath, extraQuery string
 	withExactVersion = len(esm.PkgVersion) > 0 && isExactVersion(esm.PkgVersion)
 	if !withExactVersion {
 		var p *PackageJSON
-		p, err = npmrc.getPackageInfo(pkgName, esm.PkgVersion)
+		p, err = npmrc.getPackageInfo(pkgName, PackageIdentifier{ version: esm.PkgVersion })
 		if err == nil {
 			esm.PkgVersion = p.Version
 		}
