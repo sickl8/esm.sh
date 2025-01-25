@@ -849,7 +849,7 @@ func esmRouter(db DB, buildStorage storage.Storage, logger *log.Logger) rex.Hand
 			pathname = "/pr/" + pathname[13:]
 		}
 
-		esm, extraQuery, isExactVersion, hasTargetSegment, err := praseEsmPath(npmrc, pathname)
+		esm, extraQuery, isExactVersion, hasTargetSegment, err := parseEsmPath(npmrc, ctx.R.URL)
 		if err != nil {
 			status := 500
 			message := err.Error()
@@ -876,9 +876,14 @@ func esmRouter(db DB, buildStorage storage.Storage, logger *log.Logger) rex.Hand
 			registryPrefix = "/pr"
 		}
 
+		// parse the query
+		query := ctx.Query()
+
+		// pkgAt := query.Get("at")
+
 		// redirect `/@types/PKG` to it's main dts file
 		if strings.HasPrefix(esm.PkgName, "@types/") && esm.SubPath == "" {
-			info, err := npmrc.getPackageInfo(esm.PkgName, PackageIdentifier{ version: esm.PkgVersion })
+			info, err := npmrc.getPackageInfo(esm.PkgName, PackageIdentifier{version: esm.PkgVersion})
 			if err != nil {
 				return rex.Status(500, err.Error())
 			}
@@ -930,9 +935,6 @@ func esmRouter(db DB, buildStorage storage.Storage, logger *log.Logger) rex.Hand
 			}
 			ctx.R.URL.RawQuery = strings.Join(qs, "&")
 		}
-
-		// parse the query
-		query := ctx.Query()
 
 		// use `?path=$PATH` query to override the pathname
 		if v := query.Get("path"); v != "" {
@@ -1366,7 +1368,7 @@ func esmRouter(db DB, buildStorage storage.Storage, logger *log.Logger) rex.Hand
 			for _, v := range strings.Split(query.Get("deps"), ",") {
 				v = strings.TrimSpace(v)
 				if v != "" {
-					m, _, _, _, err := praseEsmPath(npmrc, v)
+					m, _, _, _, err := parseEsmPath(npmrc, &url.URL{Path: v})
 					if err != nil {
 						return rex.Status(400, fmt.Sprintf("Invalid deps query: %v not found", v))
 					}

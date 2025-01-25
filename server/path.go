@@ -50,7 +50,8 @@ func (p EsmPath) Specifier() string {
 	return p.Name()
 }
 
-func praseEsmPath(npmrc *NpmRC, pathname string) (esm EsmPath, extraQuery string, withExactVersion bool, hasTargetSegment bool, err error) {
+func parseEsmPath(npmrc *NpmRC, pathURL *url.URL) (esm EsmPath, extraQuery string, withExactVersion bool, hasTargetSegment bool, err error) {
+	pathname := pathURL.Path
 	// see https://pkg.pr.new
 	if strings.HasPrefix(pathname, "/pr/") || strings.HasPrefix(pathname, "/pkg.pr.new/") {
 		if strings.HasPrefix(pathname, "/pr/") {
@@ -205,7 +206,8 @@ func praseEsmPath(npmrc *NpmRC, pathname string) (esm EsmPath, extraQuery string
 	withExactVersion = len(esm.PkgVersion) > 0 && isExactVersion(esm.PkgVersion)
 	if !withExactVersion {
 		var p *PackageJSON
-		p, err = npmrc.getPackageInfo(pkgName, PackageIdentifier{ version: esm.PkgVersion })
+		at := pathURL.Query().Get("at")
+		p, err = npmrc.getPackageInfo(pkgName, PackageIdentifier{version: esm.PkgVersion, UTCdateOrTimestamp: at})
 		if err == nil {
 			esm.PkgVersion = p.Version
 		}

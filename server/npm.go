@@ -351,19 +351,28 @@ type PackageIdentifier struct {
 	UTCdateOrTimestamp string
 }
 
+func isTimestamp(version string, timestamp string) bool {
+	return version == "latest" && timestamp != ""
+}
+
 func (npmrc *NpmRC) getPackageInfo(pkgName string, identifier PackageIdentifier) (packageJson *PackageJSON, err error) {
 	reg := npmrc.getRegistryByPackageName(pkgName)
-	getCacheKey := func(pkgName string, pkgVersion string) string {
+	getCacheKey := func(pkgName string, pkgVersion string, pkgDate string) string {
+		if pkgDate != "" {
+			return reg.Registry + pkgName + "#" + pkgDate
+		}
 		return reg.Registry + pkgName + "@" + pkgVersion
 	}
 
 	version := normalizePackageVersion(identifier.version)
-	UTCDate := normalizeUTCDateOrTimestamp(identifier.UTCdateOrTimestamp)
-	if (UTCDate != nil) {
-		// use date instead, or a combination of both
+	UTCDate, err := normalizeUTCDateOrTimestamp(identifier.UTCdateOrTimestamp)
+	timestamp := ""
+	if (err == nil) {
+		UTCDate = UTCDate.UTC()
+		timestamp = UTCDate.Format(dateFormatISO8601)
 	}
 
-	return withCache(getCacheKey(pkgName, version), time.Duration(config.NpmQueryCacheTTL)*time.Second, func() (*PackageJSON, string, error) {
+	return withCache(getCacheKey(pkgName, version, timestamp), time.Duration(config.NpmQueryCacheTTL)*time.Second, func() (*PackageJSON, string, error) {
 		// check if the package has been installed
 		if !isDistTag(version) && isExactVersion(version) {
 			var raw PackageJSONRaw
@@ -374,7 +383,7 @@ func (npmrc *NpmRC) getPackageInfo(pkgName string, identifier PackageIdentifier)
 		}
 
 		regUrl := reg.Registry + pkgName
-		isWellknownVersion := (isExactVersion(version) || isDistTag(version)) && strings.HasPrefix(regUrl, npmRegistry)
+		isWellknownVersion := (isExactVersion(version) || (isDistTag(version) && !isTimestamp(version, timestamp))) && strings.HasPrefix(regUrl, npmRegistry)
 		if isWellknownVersion {
 			// npm registry supports url like `https://registry.npmjs.org/<name>/<version>`
 			regUrl += "/" + version
@@ -428,7 +437,7 @@ func (npmrc *NpmRC) getPackageInfo(pkgName string, identifier PackageIdentifier)
 			if err != nil {
 				return nil, "", err
 			}
-			return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version), nil
+			return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version, ""), nil
 		}
 
 		var metadata NpmPackageMetadata
@@ -442,48 +451,83 @@ func (npmrc *NpmRC) getPackageInfo(pkgName string, identifier PackageIdentifier)
 		}
 
 	CHECK:
-		distVersion, ok := metadata.DistTags[version]
-		if ok {
-			raw, ok := metadata.Versions[distVersion]
-			if ok {
-				return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version), nil
+		if (isTimestamp(version, timestamp)) {
+			if UTCDate.Compare(time.Now().UTC()) > 0 {
+				return nil, "", fmt.Errorf("date or timestamp `%s` is in the future, this is a horrible mistake", timestamp)
 			}
-		} else {
-			if version == "lastest" {
-				return nil, "", fmt.Errorf("version %s of '%s' not found", version, pkgName)
+			type KV struct {
+				version string
+				isoDate time.Time
 			}
-			var c *semver.Constraints
-			c, err = semver.NewConstraint(version)
-			if err != nil {
-				// fallback to latest if semverOrDistTag is not a valid semver
-				version = "latest"
-				goto CHECK
-			}
-			vs := make([]*semver.Version, len(metadata.Versions))
-			i := 0
-			for v := range metadata.Versions {
-				// ignore prerelease versions
-				if !strings.ContainsRune(version, '-') && strings.ContainsRune(v, '-') {
+			// flatten "time" field map and convert values to time.Time
+			flat := []KV{}
+			for v, isoDateString := range metadata.Time {
+				if (!isExactVersion(v)) { // to skip "created" and "modified" keys
 					continue
 				}
-				var ver *semver.Version
-				ver, err = semver.NewVersion(v)
-				if err != nil {
-					return nil, "", err
-				}
-				if c.Check(ver) {
-					vs[i] = ver
-					i++
-				}
+				t, _ := time.Parse(dateFormatISO8601, isoDateString)
+				flat = append(flat, KV{ version: v, isoDate: t.UTC() })
 			}
-			if i > 0 {
-				vs = vs[:i]
-				if i > 1 {
-					sort.Sort(semver.Collection(vs))
-				}
-				raw, ok := metadata.Versions[vs[i-1].String()]
+			// sort the slice since maps don't guarantee order
+			sort.Slice(flat, func(i int, j int) bool {
+				return flat[i].isoDate.Compare(flat[j].isoDate) == -1
+			})
+			// find closest as of the documentation of `sort.Find`, still needs a -1 if UTCDate < flat[index].isoDate
+			index, found := sort.Find(len(flat), func (index int) int {
+				return UTCDate.Compare(flat[index].isoDate)
+			})
+			if (!found && index > 0) || index == len(flat) {
+				index--
+			}
+			closestVersion := flat[index].version
+			raw, ok := metadata.Versions[closestVersion]
+			if ok {
+				return raw.ToNpmPackage(), getCacheKey(pkgName, closestVersion, timestamp), nil
+			}
+		} else {
+			distVersion, ok := metadata.DistTags[version]
+			if ok {
+				raw, ok := metadata.Versions[distVersion]
 				if ok {
-					return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version), nil
+					return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version, ""), nil
+				}
+			} else {
+				if version == "lastest" {
+					return nil, "", fmt.Errorf("version %s of '%s' not found", version, pkgName)
+				}
+				var c *semver.Constraints
+				c, err = semver.NewConstraint(version)
+				if err != nil {
+					// fallback to latest if semverOrDistTag is not a valid semver
+					version = "latest"
+					goto CHECK
+				}
+				vs := make([]*semver.Version, len(metadata.Versions))
+				i := 0
+				for v := range metadata.Versions {
+					// ignore prerelease versions
+					if !strings.ContainsRune(version, '-') && strings.ContainsRune(v, '-') {
+						continue
+					}
+					var ver *semver.Version
+					ver, err = semver.NewVersion(v)
+					if err != nil {
+						return nil, "", err
+					}
+					if c.Check(ver) {
+						vs[i] = ver
+						i++
+					}
+				}
+				if i > 0 {
+					vs = vs[:i]
+					if i > 1 {
+						sort.Sort(semver.Collection(vs))
+					}
+					raw, ok := metadata.Versions[vs[i-1].String()]
+					if ok {
+						return raw.ToNpmPackage(), getCacheKey(pkgName, raw.Version, ""), nil
+					}
 				}
 			}
 		}
@@ -827,46 +871,45 @@ func normalizePackageVersion(version string) string {
 	return version
 }
 
-var epochRe = regexp.MustCompile(`^([0-9]+)(?:(s)|(ms)|(e([1-9][0-9]?)))$`)
-var utcDateRe = regexp.MustCompile(`^[0-9]{4,}(-[0-9]{2}(-[0-9]{2}(T([0-9]{2}(:[0-9]{2}(:[0-9]{3}(Z?))?)?)?)?)?)?$`)
+var epochRe = regexp.MustCompile(`^([0-9]+)(?:(s|ms)|(e([1-9][0-9]?)))$`)
+var utcDateRe = regexp.MustCompile(`^[0-9]{4,}(-[0-9]{2}(-[0-9]{2}(T([0-9]{2}(:[0-9]{2}(:[0-9]{2}(.[0-9]{1,3}(Z)?)?)?)?)?)?)?)?$`)
 
-func normalizeUTCDateOrTimestamp(timeStr string) *time.Time {
-	byteTimeStr := []byte(timeStr)
-	if epochRe.Match(byteTimeStr) {
+const dateFormatISO8601 = `2006-01-02T15:04:05.999Z`
+
+func normalizeUTCDateOrTimestamp(timeStr string) (parsedTime time.Time, err error) {
+	if epochRe.MatchString(timeStr) {
 		// timeStr is an epoch timestamp
-		matches := epochRe.FindStringSubmatch(string(byteTimeStr))
-		seconds, err := strconv.ParseInt(matches[0], 10, 64);
-		var mseconds int64 = 0
-		if (err != nil) {
-			return nil
+		matches := epochRe.FindStringSubmatch(timeStr)
+		var seconds, mseconds int64
+		seconds, err = strconv.ParseInt(matches[1], 10, 64)
+		if err != nil {
+			return
 		}
 		if matches[4] != "" {
 			// <number>e<exp>
-			exp, _ := strconv.ParseInt(matches[5], 10, 64);
-			seconds *= int64(math.Pow(10, float64(exp)));
+			exp, _ := strconv.ParseInt(matches[4], 10, 64)
+			seconds *= int64(math.Pow(10, float64(exp)))
 		} else if matches[2] == "ms" {
 			mseconds = seconds % 1000
 			seconds /= 1000
 		} // else == "s", do nothing
-		parsedTime := time.Unix(seconds, mseconds * 1e6)
-		return &parsedTime
-	} else if utcDateRe.Match(byteTimeStr) {
+		parsedTime = time.Unix(seconds, mseconds * 1e6).UTC()
+		return
+	} else if utcDateRe.MatchString(timeStr) {
 		// timeStr is a date
-		matches := utcDateRe.FindStringSubmatch(string(byteTimeStr))
-		segments := []string{"1970", "-01", "-01", "T", "00", ":00", ":000", "Z"}
+		matches := utcDateRe.FindStringSubmatch(timeStr)
+		segments := []string{"1970", "-01", "-01", "T", "00", ":00", ":00", ".000", "Z"}
+		// add missing segments
 		for index, defaultValue := range segments {
 			if matches[index] == "" {
 				timeStr += defaultValue
 			}
 		}
-		timeStr += "00:00"; // time.RFC3339 has a timezone at the end, we use UTC so it's ommited
-		parsedTime, err := time.Parse(time.RFC3339, timeStr)
-		if err != nil {
-			return nil
-		}
-		return &parsedTime
+		parsedTime, err = time.Parse(dateFormatISO8601, timeStr)
+		return
 	}
-	return nil
+	err = errors.New(timeStr + " did not match a date or epoch timestamp")
+	return
 }
 
 func isDistTag(s string) bool {

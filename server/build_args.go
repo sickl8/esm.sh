@@ -14,7 +14,7 @@ import (
 )
 
 type BuildArgs struct {
-	at                uint32
+	at                uint64
 	alias             map[string]string
 	deps              map[string]string
 	external          set.ReadOnlySet[string]
@@ -33,7 +33,7 @@ func decodeBuildArgs(argsString string) (args BuildArgs, err error) {
 				continue
 			}
 			if p[0] == '@' {
-				args.at = binary.BigEndian.Uint32(p[1:])
+				args.at = binary.BigEndian.Uint64(p[1:])
 			} else if p[0] == 'a' {
 				args.alias = map[string]string{}
 				for _, p := range strings.Split(string(p[1:]), ",") {
@@ -78,7 +78,7 @@ func encodeBuildArgs(args BuildArgs, isDts bool) string {
 	var buf bytes.Buffer
 	if args.at > 0 {
 		p := make([]byte, 4)
-		binary.BigEndian.PutUint32(p, args.at)
+		binary.BigEndian.PutUint64(p, args.at)
 		buf.WriteByte('@')
 		buf.Write(p)
 		buf.WriteByte('\n')
